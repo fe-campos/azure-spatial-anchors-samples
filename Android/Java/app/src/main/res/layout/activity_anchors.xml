@@ -15,6 +15,14 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:padding="20dp">
+
+        <SurfaceView
+            android:id="@+id/surfaceView"
+            android:layout_width="188dp"
+            android:layout_height="201dp"
+            android:layout_alignParentTop="true"
+            android:layout_alignParentEnd="true" />
+
         <Button
             android:id="@+id/backButton"
             android:layout_width="wrap_content"
@@ -52,5 +60,6 @@
             android:layout_alignParentBottom="true"
             android:text=""
             android:textAllCaps="false" />
+
     </RelativeLayout>
 </merge>

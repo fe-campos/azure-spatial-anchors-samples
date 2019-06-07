@@ -2,20 +2,34 @@
 // Licensed under the MIT license.
 package com.microsoft.sampleandroid;
 
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.ar.core.Anchor;
+import com.google.ar.core.Frame;
 import com.google.ar.core.HitResult;
 import com.google.ar.core.Plane;
 import com.google.ar.sceneform.ArSceneView;
+import com.google.ar.sceneform.Camera;
 import com.google.ar.sceneform.Scene;
+import com.google.ar.sceneform.math.Quaternion;
+import com.google.ar.sceneform.math.Vector3;
 import com.google.ar.sceneform.rendering.Color;
 import com.google.ar.sceneform.rendering.Material;
 import com.google.ar.sceneform.rendering.MaterialFactory;
@@ -33,10 +47,13 @@ import com.microsoft.azure.spatialanchors.SessionUpdatedEvent;
 import java.text.DecimalFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class AzureSpatialAnchorsActivity extends AppCompatActivity
+public class AzureSpatialAnchorsActivity extends AppCompatActivity implements SurfaceHolder.Callback
 {
+    private static final String TAG = "SkinnyBenis"; // AzureSpatialAnchorsActivity.class.getSimpleName();
+
     private String anchorID;
     private final ConcurrentHashMap<String, AnchorVisual> anchorVisuals = new ConcurrentHashMap<>();
     private boolean basicDemo = true;
@@ -47,6 +64,8 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
     private final Object progressLock = new Object();
     private final Object renderLock = new Object();
     private int saveCount = 0;
+    private Camera arCam;
+    private Frame arFrame;
 
     // Materials
     private static Material failedColor;
@@ -61,6 +80,15 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
     private TextView scanProgressText;
     private ArSceneView sceneView;
     private TextView statusText;
+    private SurfaceView positionMap;
+
+    Paint paint;
+    Path path2;
+    Bitmap bitmap;
+    Canvas canvas;
+
+    float lastX;
+    float lastY;
 
     public void exitDemoClicked(View v) {
         synchronized (renderLock) {
@@ -83,6 +111,7 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
         sceneView = arFragment.getArSceneView();
 
         Scene scene = sceneView.getScene();
+        arCam = scene.getCamera();
         scene.addOnUpdateListener(frameTime -> {
             if (cloudAnchorManager != null) {
                 // Pass frames to Spatial Anchors for processing.
@@ -95,6 +124,9 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
         scanProgressText = findViewById(R.id.scanProgressText);
         actionButton = findViewById(R.id.actionButton);
         actionButton.setOnClickListener((View v) -> advanceDemo());
+        positionMap = findViewById(R.id.surfaceView);
+
+        positionMap.getHolder().addCallback(this);
 
         MaterialFactory.makeOpaqueWithColor(this, new Color(android.graphics.Color.RED))
                 .thenAccept(material -> failedColor = material);
@@ -107,6 +139,63 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
                     readyColor = material;
                     foundColor = material;
                 });
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+    }
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        paint = new Paint();
+        path2 = new Path();
+
+        paint.setColor(android.graphics.Color.RED);
+        paint.setStyle(Paint.Style.FILL_AND_STROKE);
+        paint.setStrokeWidth(8);
+
+        canvas = positionMap.getHolder().lockCanvas();
+        // canvas.drawARGB(255, 52, 175, 230);
+        // canvas.drawLine(lastX, lastY, positionMap.getWidth() / 2, positionMap.getHeight() / 2, paint);
+        positionMap.getHolder().unlockCanvasAndPost(canvas);
+
+        lastX = positionMap.getWidth() / 2;
+        lastY = positionMap.getHeight() / 2;
+
+        Handler handler = new Handler();
+        Runnable runnable = new Runnable() {
+            @Override
+            public void run() {
+                Vector3 pos = getPose(false);
+                try {
+                    canvas = positionMap.getHolder().lockCanvas();
+                    synchronized (holder) {
+                        int x = positionMap.getWidth() / 2 + (int) ((pos.x / 60.0) * (double) positionMap.getWidth());
+                        int y = positionMap.getHeight() / 2 + (int) ((pos.z / 60.0) * (double) positionMap.getHeight());
+                        // canvas.drawARGB(255, 52, 175, 230);
+                        canvas.drawLine(lastX, lastY, x, y, paint);
+                        // canvas.drawPoint(x, y, paint);
+                        lastX = x; lastY = y;
+                    }
+                } finally {
+                    if (canvas != null) {
+                        positionMap.getHolder().unlockCanvasAndPost(canvas);
+                        // Log.d(TAG, "success");
+                    } else {
+                        // Log.d(TAG, "fail");
+                    }
+                }
+
+                handler.postDelayed(this, 50);
+            }
+        };
+
+        runnable.run();
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        //
     }
 
     @Override
@@ -142,6 +231,22 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
         super.onStart();
 
         startDemo();
+    }
+
+    private Vector3 getPose(boolean log) {
+        Vector3 pos = arCam.getWorldPosition();
+        Quaternion quat = arCam.getWorldRotation();
+
+        float roll = (float) (Math.atan2(2*quat.y*quat.w + 2*quat.x*quat.z, 1 - 2*quat.y*quat.y - 2*quat.z*quat.z)*180/3.14159);
+        float pitch = (float) (Math.atan2(2*quat.x*quat.w + 2*quat.y*quat.z, 1 - 2*quat.x*quat.x - 2*quat.z*quat.z)*180/3.14159);
+        float yaw = (float) (Math.asin(2*quat.x*quat.y + 2*quat.z*quat.w)*180/3.14159);
+
+        Vector3 euler = new Vector3(roll, pitch, yaw);
+        if (log) {
+            Log.d(TAG, "Pos|Rot: " + pos + " | " + euler);
+        }
+
+        return pos;
     }
 
     private void advanceDemo() {
@@ -447,7 +552,7 @@ public class AzureSpatialAnchorsActivity extends AppCompatActivity
 
     private void startNewSession() {
         destroySession();
-        
+
         cloudAnchorManager = new AzureSpatialAnchorsManager(sceneView.getSession());
         cloudAnchorManager.addAnchorLocatedListener(this::onAnchorLocated);
         cloudAnchorManager.addLocateAnchorsCompletedListener(this::onLocateAnchorsCompleted);
